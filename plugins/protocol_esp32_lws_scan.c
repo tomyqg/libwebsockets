@@ -75,6 +75,9 @@ struct per_vhost_data__esplws_scan {
 	char json[2048];
 	int json_len;
 
+	int acme_state;
+	char acme_msg[256];
+
 	uint16_t count_ap_records;
 	char count_live_pss;
 	unsigned char scan_ongoing:1;
@@ -157,6 +160,9 @@ scan_start(struct per_vhost_data__esplws_scan *vhd)
 		esp_restart();
 
 	if (vhd->scan_ongoing)
+		return;
+
+	if (lws_esp32.acme)
 		return;
 
 	vhd->scan_ongoing = 1;
@@ -481,6 +487,10 @@ callback_esplws_scan(struct lws *wsi, enum lws_callback_reasons reason,
 				      " \"unixtime\":\"%llu\",\n"
 				      " \"certissuer\":\"%s\",\n"
 				      " \"certsubject\":\"%s\",\n"
+				      " \"le_dns\":\"%s\",\n"
+				      " \"le_email\":\"%s\",\n"
+				      " \"acme_state\":\"%d\",\n"
+				      " \"acme_msg\":\"%s\",\n"
 				      " \"button\":\"%d\",\n"
 				      " \"group\":\"%s\",\n"
 				      " \"role\":\"%s\",\n",
@@ -499,6 +509,10 @@ callback_esplws_scan(struct lws *wsi, enum lws_callback_reasons reason,
 				      vhd->cert_remaining_days,
 				      (unsigned long long)t.tv_sec,
 				      ir.ns.name, subject,
+				      lws_esp32.le_dns,
+				      lws_esp32.le_email,
+				      vhd->acme_state,
+				      vhd->acme_msg,
 				      ((volatile struct lws_esp32 *)(&lws_esp32))->button_is_down,
 				      group, role);
 			p += snprintf((char *)p, end - p,
@@ -622,6 +636,17 @@ issue:
 
 		break;
 
+	case LWS_CALLBACK_VHOST_CERT_UPDATE:
+		lwsl_notice("LWS_CALLBACK_VHOST_CERT_UPDATE: %d\n", (int)len);
+		vhd->acme_state = (int)len;
+		if (in) {
+			strncpy(vhd->acme_msg, in, sizeof(vhd->acme_msg) - 1);
+			vhd->acme_msg[sizeof(vhd->acme_msg) - 1] = '\0';
+			lwsl_notice("acme_msg: %s\n", (char *)in);
+		}
+		lws_callback_on_writable_all_protocol_vhost(vhd->vhost, vhd->protocol);
+		break;
+
 	case LWS_CALLBACK_RECEIVE:
 		{
 			const char *sect = "\"app\": {", *b;
@@ -643,6 +668,10 @@ issue:
 
 			if (strstr((const char *)in, "\"reset\""))
 				goto sched_reset;
+
+			if (!strncmp((const char *)in, "{\"job\":\"start-le\"", 17))
+				goto start_le;
+
 
 			if (nvs_open("lws-station", NVS_READWRITE, &nvh) != ESP_OK) {
 				lwsl_err("Unable to open nvs\n");
@@ -767,6 +796,61 @@ auton:
 				vhd->autonomous_update = 0;
 
 			break;
+
+start_le:
+			lws_esp32.acme = 1; /* hold off scanning */
+			puts(in);
+			/*
+			 * {"job":"start-le","cn":"home.warmcat.com",
+			 * "email":"andy@warmcat.com"}
+			 */
+
+			if (nvs_open("lws-station", NVS_READWRITE, &nvh) != ESP_OK) {
+				lwsl_err("Unable to open nvs\n");
+				break;
+			}
+
+			n = 0;
+			b = strstr(in, ",\"cn\":\"");
+			if (b) {
+				b += 7;
+				while (*b && *b != '\"' && n < sizeof(lws_esp32.le_dns) - 1)
+					lws_esp32.le_dns[n++] = *b++;
+			}
+			lws_esp32.le_dns[n] = '\0';
+
+			lws_nvs_set_str(nvh, "acme-cn", lws_esp32.le_dns);
+			n = 0;
+			b = strstr(in, ",\"email\":\"");
+			if (b) {
+				b += 10;
+				while (*b && *b != '\"' && n < sizeof(lws_esp32.le_email) - 1)
+					lws_esp32.le_email[n++] = *b++;
+			}
+			lws_esp32.le_email[n] = '\0';
+			lws_nvs_set_str(nvh, "acme-email", lws_esp32.le_email);
+			nvs_commit(nvh);
+
+			nvs_close(nvh);
+
+			lwsl_notice("cn: %s, email: %s\n", lws_esp32.le_dns, lws_esp32.le_email);
+
+			{
+				struct lws_acme_cert_aging_args caa;
+
+				memset(&caa, 0, sizeof(caa));
+				caa.vh = vhd->vhost;
+
+				caa.element_overrides[LWS_TLS_REQ_ELEMENT_COMMON_NAME] = lws_esp32.le_dns;
+				caa.element_overrides[LWS_TLS_REQ_ELEMENT_EMAIL] = lws_esp32.le_email;
+
+				lws_callback_vhost_protocols_vhost(vhd->vhost,
+						LWS_CALLBACK_VHOST_CERT_AGING,
+							(void *)&caa, 0);
+			}
+
+			break;
+
 		}
 
 	case LWS_CALLBACK_CLOSED:

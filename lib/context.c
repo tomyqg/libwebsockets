@@ -838,12 +838,12 @@ lws_create_vhost(struct lws_context *context,
 		vh->log_fd = (int)LWS_INVALID_FILE;
 #endif
 	if (lws_context_init_server_ssl(info, vh))
-		goto bail;
+		goto bail1;
 	if (lws_context_init_client_ssl(info, vh))
-		goto bail;
+		goto bail1;
 	if (lws_context_init_server(info, vh)) {
 		lwsl_err("init server failed\n");
-		goto bail;
+		goto bail1;
 	}
 
 	while (1) {
@@ -858,12 +858,19 @@ lws_create_vhost(struct lws_context *context,
 
 	if (context->protocol_init_done)
 		if (lws_protocol_init(context))
-			goto bail;
+			goto bail1;
 
 	return vh;
 
+bail1:
+	lws_vhost_destroy(vh);
+
+	return NULL;
+
+#ifdef LWS_WITH_ACCESS_LOG
 bail:
 	lws_free(vh);
+#endif
 
 	return NULL;
 }
@@ -1442,6 +1449,13 @@ lws_vhost_destroy1(struct lws_vhost *vh)
 			n--;
 		}
 	}
+
+	/*
+	 * destroy any pending timed events
+	 */
+
+	while (vh->timed_vh_protocol_list)
+		lws_timed_callback_remove(vh, vh->timed_vh_protocol_list);
 
 	/*
 	 * let the protocols destroy the per-vhost protocol objects

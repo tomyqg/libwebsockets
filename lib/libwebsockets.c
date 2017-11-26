@@ -192,6 +192,42 @@ lws_set_timeout(struct lws *wsi, enum pending_timeout reason, int secs)
 		lws_remove_from_timeout_list(wsi);
 }
 
+int
+lws_timed_callback_remove(struct lws_vhost *vh, struct lws_timed_vh_protocol *p)
+{
+	lws_start_foreach_llp(struct lws_timed_vh_protocol **, pt,
+			      vh->timed_vh_protocol_list) {
+		if (*pt == p) {
+			*pt = p->next;
+			lws_free(p);
+
+			return 0;
+		}
+	} lws_end_foreach_llp(pt, next);
+
+	return 1;
+}
+
+LWS_VISIBLE LWS_EXTERN int
+lws_timed_callback_vh_protocol(struct lws_vhost *vh, const struct lws_protocols *prot,
+			       int reason, int secs)
+{
+	struct lws_timed_vh_protocol *p = (struct lws_timed_vh_protocol *)
+			lws_malloc(sizeof(*p), "timed_vh");
+
+	if (!p)
+		return 1;
+
+	p->protocol = prot;
+	p->reason = reason;
+	p->time = lws_now_secs() + secs;
+	p->next = vh->timed_vh_protocol_list;
+
+	vh->timed_vh_protocol_list = p;
+
+	return 0;
+}
+
 static void
 lws_remove_child_from_any_parent(struct lws *wsi)
 {
@@ -415,7 +451,7 @@ lws_close_free_wsi(struct lws *wsi, enum lws_close_status reason)
 #endif
 
 #if !defined(LWS_NO_CLIENT)
-	lws_free_set_NULL(wsi->stash);
+	lws_client_stash_destroy(wsi);
 #endif
 
 	if (wsi->mode == LWSCM_RAW) {
@@ -584,7 +620,11 @@ just_kill_connection:
 	}
 
 	if (wsi->mode & LWSCM_FLAG_IMPLIES_CALLBACK_CLOSED_CLIENT_HTTP) {
-		wsi->vhost->protocols[0].callback(wsi,
+		const struct lws_protocols *pro = wsi->protocol;
+
+		if (!wsi->protocol)
+			pro = &wsi->vhost->protocols[0];
+		pro->callback(wsi,
 					LWS_CALLBACK_CLOSED_CLIENT_HTTP,
 						  wsi->user_space, NULL, 0);
 		wsi->told_user_closed = 1;
@@ -1150,6 +1190,29 @@ lws_callback_vhost_protocols(struct lws *wsi, int reason, void *in, int len)
 	for (n = 0; n < wsi->vhost->count_protocols; n++)
 		if (wsi->vhost->protocols[n].callback(wsi, reason, NULL, in, len))
 			return 1;
+
+	return 0;
+}
+
+LWS_VISIBLE LWS_EXTERN int
+lws_callback_vhost_protocols_vhost(struct lws_vhost *vh, int reason, void *in,
+				   size_t len)
+{
+	int n;
+	struct lws *wsi = lws_zalloc(sizeof(*wsi), "fake wsi");
+
+	wsi->context = vh->context;
+	wsi->vhost = vh;
+
+	for (n = 0; n < wsi->vhost->count_protocols; n++) {
+		wsi->protocol = &vh->protocols[n];
+		if (wsi->protocol->callback(wsi, reason, NULL, in, len)) {
+			lws_free(wsi);
+			return 1;
+		}
+	}
+
+	lws_free(wsi);
 
 	return 0;
 }

@@ -64,7 +64,7 @@ unsigned int max_content_len;
 /*********************************************************************************************/
 /************************************ SSL arch interface *************************************/
 
-#ifdef CONFIG_OPENSSL_LOWLEVEL_DEBUG
+//#ifdef CONFIG_OPENSSL_LOWLEVEL_DEBUG
 
 /* mbedtls debug level */
 #define MBEDTLS_DEBUG_LEVEL 4
@@ -81,13 +81,13 @@ static void ssl_platform_debug(void *ctx, int level,
        This is a bit wasteful because the macros are compiled in with
        the full _FILE_ path in each case.
     */
-    char *file_sep = rindex(file, '/');
-    if(file_sep)
-        file = file_sep + 1;
+//    char *file_sep = rindex(file, '/');
+  //  if(file_sep)
+    //    file = file_sep + 1;
 
-    SSL_DEBUG(SSL_DEBUG_ON, "%s:%d %s", file, line, str);
+    printf("%s:%d %s", file, line, str);
 }
-#endif
+//#endif
 
 /**
  * @brief create SSL low-level object
@@ -163,12 +163,12 @@ int ssl_pm_new(SSL *ssl)
 
     mbedtls_ssl_conf_rng(&ssl_pm->conf, mbedtls_ctr_drbg_random, &ssl_pm->ctr_drbg);
 
-#ifdef CONFIG_OPENSSL_LOWLEVEL_DEBUG
-    mbedtls_debug_set_threshold(MBEDTLS_DEBUG_LEVEL);
+//#ifdef CONFIG_OPENSSL_LOWLEVEL_DEBUG
+ //   mbedtls_debug_set_threshold(MBEDTLS_DEBUG_LEVEL);
+//    mbedtls_ssl_conf_dbg(&ssl_pm->conf, ssl_platform_debug, NULL);
+//#else
     mbedtls_ssl_conf_dbg(&ssl_pm->conf, ssl_platform_debug, NULL);
-#else
-    mbedtls_ssl_conf_dbg(&ssl_pm->conf, NULL, NULL);
-#endif
+//#endif
 
     ret = mbedtls_ssl_setup(&ssl_pm->ssl, &ssl_pm->conf);
     if (ret) {
@@ -265,7 +265,7 @@ static int mbedtls_handshake( mbedtls_ssl_context *ssl )
     while (ssl->state != MBEDTLS_SSL_HANDSHAKE_OVER) {
         ret = mbedtls_ssl_handshake_step(ssl);
 
-        SSL_DEBUG(SSL_PLATFORM_DEBUG_LEVEL, "ssl ret %d state %d", ret, ssl->state);
+        //printf("ssl ret %d state %d\n", ret, ssl->state);
 
         if (ret != 0)
             break;
@@ -274,14 +274,23 @@ static int mbedtls_handshake( mbedtls_ssl_context *ssl )
     return ret;
 }
 
+#include <errno.h>
+
 int ssl_pm_handshake(SSL *ssl)
 {
     int ret;
     struct ssl_pm *ssl_pm = (struct ssl_pm *)ssl->ssl_pm;
 
+    printf("%s\n", __func__);
+
+    ssl->err = 0;
+    errno = 0;
+
     ret = ssl_pm_reload_crt(ssl);
-    if (ret)
+    if (ret) {
+	    printf("%s: cert reload failed\n", __func__);
         return 0;
+    }
 
     if (ssl_pm->ssl.state != MBEDTLS_SSL_HANDSHAKE_OVER) {
 	    ssl_speed_up_enter();
@@ -302,6 +311,7 @@ int ssl_pm_handshake(SSL *ssl)
      *   <0 = death
      */
     if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+	    ssl->err = ret;
         SSL_DEBUG(SSL_PLATFORM_ERROR_LEVEL, "mbedtls_ssl_handshake() return -0x%x", -ret);
         return 0; /* OpenSSL: did not complete but may be retried */
     }
@@ -312,6 +322,14 @@ int ssl_pm_handshake(SSL *ssl)
         x509_pm->ex_crt = (mbedtls_x509_crt *)mbedtls_ssl_get_peer_cert(&ssl_pm->ssl);
         return 1; /* openssl successful */
     }
+
+    if (errno == 11) {
+	    ssl->err = ret == MBEDTLS_ERR_SSL_WANT_READ;
+
+	    return 0;
+    }
+
+    printf("%s: mbedtls_ssl_handshake() returned -0x%x\n", __func__, -ret);
 
     /* it's had it */
 

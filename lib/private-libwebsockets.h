@@ -898,6 +898,13 @@ struct http2_settings {
 	uint32_t s[H2SET_COUNT];
 };
 
+struct lws_timed_vh_protocol {
+	struct lws_timed_vh_protocol *next;
+	const struct lws_protocols *protocol;
+	time_t time;
+	int reason;
+};
+
 /*
  * virtual host -related context information
  *   vhostwide SSL context
@@ -958,6 +965,7 @@ struct lws_vhost {
 #ifndef LWS_NO_EXTENSIONS
 	const struct lws_extension *extensions;
 #endif
+	struct lws_timed_vh_protocol *timed_vh_protocol_list;
 	void *user;
 
 	int listen_port;
@@ -1317,13 +1325,13 @@ enum uri_esc_states {
 
 #ifndef LWS_NO_CLIENT
 struct client_info_stash {
-	char address[256];
-	char path[4096];
-	char host[256];
-	char origin[256];
-	char protocol[256];
-	char method[16];
-	char iface[16];
+	char *address;
+	char *path;
+	char *host;
+	char *origin;
+	char *protocol;
+	char *method;
+	char *iface;
 };
 #endif
 
@@ -2040,6 +2048,9 @@ lws_b64_selftest(void);
 LWS_EXTERN int
 lws_service_flag_pending(struct lws_context *context, int tsi);
 
+LWS_EXTERN int
+lws_timed_callback_remove(struct lws_vhost *vh, struct lws_timed_vh_protocol *p);
+
 #if defined(_WIN32)
 LWS_EXTERN struct lws *
 wsi_from_fd(const struct lws_context *context, lws_sockfd_type fd);
@@ -2089,6 +2100,9 @@ lws_client_connect_via_info2(struct lws *wsi);
 
 LWS_EXTERN int
 _lws_destroy_ah(struct lws_context_per_thread *pt, struct allocated_headers *ah);
+
+LWS_EXTERN void
+lws_client_stash_destroy(struct lws *wsi);
 
 /*
  * EXTENSIONS

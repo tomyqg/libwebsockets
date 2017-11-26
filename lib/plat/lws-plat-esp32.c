@@ -107,7 +107,7 @@ lws_poll_listen_fd(struct lws_pollfd *fd)
 
 LWS_VISIBLE void lwsl_emit_syslog(int level, const char *line)
 {
-	printf("%d: %s", level, line);
+	lwsl_emit_stderr(level, line);
 }
 
 LWS_VISIBLE LWS_EXTERN int
@@ -1664,13 +1664,13 @@ lws_esp32_set_creation_defaults(struct lws_context_creation_info *info)
 
 	info->vhost_name = "default";
 	info->port = 443;
-	info->fd_limit_per_thread = 30;
-	info->max_http_header_pool = 16;
-	info->max_http_header_data = 512;
-	info->pt_serv_buf_size = 2048;
+	info->fd_limit_per_thread = 16;
+	info->max_http_header_pool = 5;
+	info->max_http_header_data = 1024;
+	info->pt_serv_buf_size = 4096;
 	info->keepalive_timeout = 30;
 	info->timeout_secs = 30;
-	info->simultaneous_ssl_restriction = 4;
+	info->simultaneous_ssl_restriction = 2;
 	info->options = LWS_SERVER_OPTION_EXPLICIT_VHOSTS |
 		        LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
 }
@@ -1848,6 +1848,22 @@ fail:
 	return -1;
 }
 
+void
+lws_esp32_update_acme_info(void)
+{
+        int n;
+
+	n = lws_plat_read_file("acme-email", lws_esp32.le_email,
+			       sizeof(lws_esp32.le_email) - 1);
+	if (n >= 0)
+		lws_esp32.le_email[n] = '\0';
+
+	n = lws_plat_read_file("acme-cn", lws_esp32.le_dns,
+			       sizeof(lws_esp32.le_dns) - 1);
+	if (n >= 0)
+		lws_esp32.le_dns[n] = '\0';
+}
+
 struct lws_context *
 lws_esp32_init(struct lws_context_creation_info *info, struct lws_vhost **pvh)
 {
@@ -1889,6 +1905,8 @@ lws_esp32_init(struct lws_context_creation_info *info, struct lws_vhost **pvh)
 		lwsl_err("Failed to create vhost\n");
 		return NULL;
 	}
+
+	lws_esp32_update_acme_info();
 
 	lws_esp32_selfsigned(vhost);
 	wsi.context = vhost->context;

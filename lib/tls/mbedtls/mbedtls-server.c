@@ -84,12 +84,12 @@ lws_mbedtls_sni_cb(void *arg, mbedtls_ssl_context *mbedtls_ctx,
 	vhost = lws_select_vhost(context, vh->listen_port,
 				 (const char *)servername);
 	if (!vhost) {
-		lwsl_info("SNI: none: %s:%d\n", servername, vh->listen_port);
+		lwsl_notice("SNI: none: %s:%d\n", servername, vh->listen_port);
 
 		return 0;
 	}
 
-	lwsl_info("SNI: Found: %s:%d at vhost '%s'\n", servername,
+	lwsl_notice("SNI: Found: %s:%d at vhost '%s'\n", servername,
 					vh->listen_port, vhost->name);
 
 	/* select the ssl ctx from the selected vhost for this conn */
@@ -298,6 +298,8 @@ lws_tls_server_accept(struct lws *wsi)
 	}
 
 	m = SSL_get_error(wsi->ssl, n);
+
+	lwsl_notice("%s: accept SSL_get_error %d errno %d\n", __func__, m, errno);
 
 	// mbedtls wrapper only
 	if (m == SSL_ERROR_SYSCALL && errno == 11)
@@ -527,8 +529,8 @@ lws_tls_acme_sni_cert_create(struct lws_vhost *vhost, const char *san_a,
 		lws_free(pkey_asn1);
 		goto bail2;
 	}
-	lwsl_debug("private key\n");
-	lwsl_hexdump_level(LLL_DEBUG, pkey_asn1, n);
+	//lwsl_debug("private key\n");
+	//lwsl_hexdump_level(LLL_DEBUG, pkey_asn1, n);
 
 	/* and to use our generated private key */
 	n = SSL_CTX_use_PrivateKey_ASN1(0, vhost->ssl_ctx, pkey_asn1, n);
@@ -542,7 +544,7 @@ lws_tls_acme_sni_cert_create(struct lws_vhost *vhost, const char *san_a,
 	lws_jwk_destroy_genrsa_elements(&el);
 
 	if (n == 1) {
-		lwsl_hexdump_level(LLL_DEBUG, buf, lws_ptr_diff(p, buf));
+//		lwsl_hexdump_level(LLL_DEBUG, buf, lws_ptr_diff(p, buf));
 
 		n = SSL_CTX_use_certificate_ASN1(vhost->ssl_ctx,
 					 lws_ptr_diff(p, buf), buf);
